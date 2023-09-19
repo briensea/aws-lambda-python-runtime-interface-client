@@ -9,6 +9,8 @@ import os
 import sys
 import time
 import traceback
+import re
+import pkg_resources
 
 from .lambda_context import LambdaContext
 from .lambda_runtime_client import LambdaRuntimeClient
@@ -27,6 +29,10 @@ from .lambda_runtime_marshaller import to_json
 from .lambda_unhandled_exception_warning_message import (
     lambda_unhandled_exception_warning_message_warning_type,
     lambda_unhandled_exception_warning_message,
+)
+from .lambda_sdk_validation_warning_message import (
+    lambda_invalid_sdk_requirements_warning_message_warning_type,
+    generate_invalid_sdk_requirement_message,
 )
 
 ERROR_LOG_LINE_TERMINATE = "\r"
@@ -522,6 +528,48 @@ def _setup_logging(log_format, log_level, log_sink):
     logger.addHandler(logger_handler)
 
 
+def _validate_sdk_requirements_compatability(requirements, log_sink):
+    if not os.path.exists(requirements):
+        print(f"Requirements file for SDK validation does not exist: {requirements}")
+    else:
+        required_package_versions = {}
+
+        package_lines_pattern = re.compile(r"^([\w-]+)(?:==([\d.]+))?$")
+
+        with open(requirements, "r") as reqs_file:
+            for line in reqs_file:
+                match = package_lines_pattern.match(line.strip())
+                if match:
+                    package_name, package_version = match.groups()
+                    required_package_versions[package_name] = package_version
+
+        all_installed_packages = {}
+
+        for package in pkg_resources.working_set:
+            all_installed_packages[package.project_name] = package.version
+
+        for package, version in required_package_versions.items():
+            if (
+                package in all_installed_packages
+                and all_installed_packages[package] != version
+            ):
+                lambda_boto3_version = required_package_versions["boto3"]
+                lambda_botocore_version = required_package_versions["botocore"]
+                invalid_lambda_sdk_requirement_warning_message = (
+                    generate_invalid_sdk_requirement_message(
+                        lambda_boto3_version,
+                        lambda_botocore_version,
+                        package,
+                        all_installed_packages[package],
+                    )
+                )
+                warning_result = make_warning(
+                    invalid_lambda_sdk_requirement_warning_message,
+                    lambda_invalid_sdk_requirements_warning_message_warning_type,
+                )
+                log_warning(warning_result, log_sink)
+
+
 def run(app_root, handler, lambda_runtime_api_addr):
     sys.stdout = Unbuffered(sys.stdout)
     sys.stderr = Unbuffered(sys.stderr)
@@ -531,6 +579,7 @@ def run(app_root, handler, lambda_runtime_api_addr):
 
         try:
             _setup_logging(_AWS_LAMBDA_LOG_FORMAT, _AWS_LAMBDA_LOG_LEVEL, log_sink)
+            _validate_sdk_requirements_compatability('/var/runtime/sdk-requirements.txt', log_sink)
             global _GLOBAL_AWS_REQUEST_ID
 
             request_handler = _get_handler(handler)
