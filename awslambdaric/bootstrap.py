@@ -579,7 +579,9 @@ def run(app_root, handler, lambda_runtime_api_addr):
 
         try:
             _setup_logging(_AWS_LAMBDA_LOG_FORMAT, _AWS_LAMBDA_LOG_LEVEL, log_sink)
-            _validate_sdk_requirements_compatability('/var/runtime/sdk-requirements.txt', log_sink)
+            _validate_sdk_requirements_compatability(
+                "/var/runtime/sdk-requirements.txt", log_sink
+            )
             global _GLOBAL_AWS_REQUEST_ID
 
             request_handler = _get_handler(handler)
